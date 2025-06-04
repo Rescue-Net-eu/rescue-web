@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rescue-Net</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <header>
+        <h1>Rescue-Net</h1>
+        <nav>
+            <a href="https://github.com/Rescue-Net-eu/Rescue-Net.eu">GitHub</a>
+        </nav>
+    </header>
+    <main>
+        <section id="status">
+            Checking backend status...
+        </section>
+        <section>
+            <h2>Welcome</h2>
+            <p>This site integrates with the <a href="https://github.com/Rescue-Net-eu/Rescue-Net.eu">Rescue-Net webapp</a>.</p>
+            <p>Use the links above to explore the project.</p>
+        </section>
+    </main>
+    <script>
+        async function checkStatus() {
+            try {
+                const res = await fetch('/health');
+                if (!res.ok) throw new Error('Network response was not ok');
+                const data = await res.json();
+                document.getElementById('status').textContent = `Backend status: ${data.status}`;
+            } catch (err) {
+                document.getElementById('status').textContent = 'Backend unreachable';
+            }
+        }
+        checkStatus();
+    </script>
+</body>
+</html>
