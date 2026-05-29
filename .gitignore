@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+.env
+.env.local
+
+# Node (app-level .gitignore files cover the rest)
+node_modules/
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/

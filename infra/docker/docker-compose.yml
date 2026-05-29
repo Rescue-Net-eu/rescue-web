@@ -1,0 +1,59 @@
+# Development / reference compose for the rescue-net.eu stack (manual §11, §17.4).
+# For production, put Traefik in front and use managed PostgreSQL/Redis where
+# possible. Secrets must come from the environment, never committed (§15.5).
+
+services:
+  db:
+    image: postgis/postgis:16-3.4
+    environment:
+      POSTGRES_USER: rescuenet
+      POSTGRES_PASSWORD: rescuenet
+      POSTGRES_DB: rescuenet
+    ports:
+      - "5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rescuenet"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: ../../services/api
+    environment:
+      APP_ENV: development
+      DATABASE_URL: postgresql+asyncpg://rescuenet:rescuenet@db:5432/rescuenet
+      REDIS_URL: redis://redis:6379/0
+      ALLOWED_ORIGINS: http://localhost:3000
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  web:
+    build:
+      context: ../../apps/web
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+
+volumes:
+  db_data:
