@@ -10,6 +10,7 @@ from __future__ import annotations
 from logging.config import fileConfig
 
 from alembic import context
+from geoalchemy2 import alembic_helpers
 from sqlalchemy import engine_from_config, pool
 
 from app import models  # noqa: F401 - imported so models register on Base.metadata
@@ -38,6 +39,11 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        # GeoAlchemy2 helpers exclude PostGIS system tables (spatial_ref_sys,
+        # tiger, topology) from autogenerate and render spatial types correctly.
+        include_object=alembic_helpers.include_object,
+        render_item=alembic_helpers.render_item,
+        process_revision_directives=alembic_helpers.writer,
     )
     with context.begin_transaction():
         context.run_migrations()
@@ -48,7 +54,13 @@ def run_migrations_online() -> None:
     section["sqlalchemy.url"] = _database_url()
     connectable = engine_from_config(section, prefix="sqlalchemy.", poolclass=pool.NullPool)
     with connectable.connect() as connection:
-        context.configure(connection=connection, target_metadata=target_metadata)
+        context.configure(
+            connection=connection,
+            target_metadata=target_metadata,
+            include_object=alembic_helpers.include_object,
+            render_item=alembic_helpers.render_item,
+            process_revision_directives=alembic_helpers.writer,
+        )
         with context.begin_transaction():
             context.run_migrations()
 

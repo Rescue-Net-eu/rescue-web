@@ -16,6 +16,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     String,
     Text,
     func,
@@ -109,6 +110,9 @@ class Incident(Base):
 
 class Alert(Base):
     __tablename__ = "alerts"
+    # Candidate selection and response queries filter by responder + status
+    # (manual section 18.8 "Alert user status index").
+    __table_args__ = (Index("ix_alerts_user_status", "user_id", "status"),)
 
     id: Mapped[uuid.UUID] = _uuid_pk()
     incident_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("incidents.id", ondelete="CASCADE"))
@@ -116,7 +120,7 @@ class Alert(Base):
     alert_type: Mapped[AlertType] = mapped_column(
         String(32), default=AlertType.AVAILABILITY_REQUEST
     )
-    status: Mapped[str] = mapped_column(String(32), default="sent", index=True)
+    status: Mapped[str] = mapped_column(String(32), default="sent")
     sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     responded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     response: Mapped[AlertResponse | None] = mapped_column(String(16))
@@ -156,11 +160,12 @@ class MissionMember(Base):
 
 class Location(Base):
     __tablename__ = "locations"
+    # Live-track reads are by mission over a time window; retention sweeps are by
+    # timestamp (manual sections 18.8 and 16.2).
+    __table_args__ = (Index("ix_locations_mission_timestamp", "mission_id", "timestamp"),)
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    mission_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("missions.id", ondelete="CASCADE"), index=True
-    )
+    mission_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("missions.id", ondelete="CASCADE"))
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
     timestamp: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True
