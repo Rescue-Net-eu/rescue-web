@@ -22,10 +22,14 @@ Implemented (manual §27 priorities 1–6):
 - **Mission creation** (§5.3) — `POST /incidents/{id}/create-mission` assigns a Team Lead
   and enrolls responders who accepted; `GET /missions`, `GET /missions/{id}` (membership-
   scoped) and `PATCH /missions/{id}` for status transitions (§8).
+- **Mission room** (§5.4, §14.2) — join/leave with explicit live-location consent (§16.2),
+  chat (`/missions/{id}/messages`), live location ingestion + latest-per-member
+  (`/missions/{id}/locations`, `/locations/live`), and closure (`/missions/{id}/close`,
+  which stops all live sharing and locks the mission). Realtime events fan out over
+  **Redis pub/sub** to a WebSocket at `ws://…/ws/missions/{id}?token=…`.
 - **Audit logging** — every high-risk action is recorded; `GET /admin/audit-logs`.
 
-The mission room (WebSocket), chat, tasks, live location and mission closure are the
-next increments.
+Tasks, mobile, and the full retention jobs are the next increments.
 
 ## Local development
 

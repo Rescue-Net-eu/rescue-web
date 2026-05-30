@@ -189,3 +189,45 @@ class MissionOut(BaseModel):
 
 class MissionUpdate(BaseModel):
     status: MissionStatus
+
+
+class MissionJoinRequest(BaseModel):
+    # Enabling live location is explicit, per-mission consent (manual §16.2).
+    live_location_enabled: bool = False
+
+
+class MissionCloseRequest(BaseModel):
+    closure_summary: str | None = Field(default=None, max_length=4000)
+
+
+# --- Mission chat & location ---------------------------------------------
+
+
+class ChatMessageCreate(BaseModel):
+    message: str = Field(min_length=1, max_length=4000)
+
+
+class ChatMessageOut(BaseModel):
+    id: uuid.UUID
+    mission_id: uuid.UUID
+    user_id: uuid.UUID
+    message: str
+    created_at: datetime
+
+
+class LocationCreate(BaseModel):
+    latitude: float = Field(ge=-90, le=90)
+    longitude: float = Field(ge=-180, le=180)
+    accuracy_m: float | None = Field(default=None, ge=0)
+    speed: float | None = None
+    heading: float | None = Field(default=None, ge=0, lt=360)
+
+
+class LocationOut(BaseModel):
+    user_id: uuid.UUID
+    latitude: float
+    longitude: float
+    accuracy_m: float | None
+    speed: float | None
+    heading: float | None
+    timestamp: datetime

@@ -261,6 +261,140 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Mission" }
+  /missions/{mission_id}/join:
+    post:
+      summary: Join a mission; enable live location with explicit consent (§5.3, §16.2)
+      tags: [missions]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: mission_id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                live_location_enabled: { type: boolean, default: false }
+      responses:
+        "200":
+          description: Updated mission
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Mission" }
+  /missions/{mission_id}/leave:
+    post:
+      summary: Leave a mission; stops live location sharing (§16.2)
+      tags: [missions]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: mission_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Updated mission
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Mission" }
+  /missions/{mission_id}/close:
+    post:
+      summary: Close a mission (staff or Team Lead; §5.5)
+      tags: [missions]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: mission_id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                closure_summary: { type: string, nullable: true }
+      responses:
+        "200":
+          description: Closed mission
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Mission" }
+  /missions/{mission_id}/messages:
+    get:
+      summary: List mission chat messages
+      tags: [missions]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: mission_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Chat messages
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ChatMessage" }
+    post:
+      summary: Post a mission chat message
+      tags: [missions]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: mission_id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [message]
+              properties:
+                message: { type: string }
+      responses:
+        "201":
+          description: Created message
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChatMessage" }
+        "409": { description: Mission is closed }
+  /missions/{mission_id}/locations:
+    post:
+      summary: Ingest a live location sample (active member with consent; §16.2)
+      tags: [missions]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: mission_id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [latitude, longitude]
+              properties:
+                latitude: { type: number }
+                longitude: { type: number }
+                accuracy_m: { type: number, nullable: true }
+                speed: { type: number, nullable: true }
+                heading: { type: number, nullable: true }
+      responses:
+        "201":
+          description: Stored location
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Location" }
+        "403": { description: Not an active member or consent not given }
+  /missions/{mission_id}/locations/live:
+    get:
+      summary: Latest known location per member (§5.4)
+      tags: [missions]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: mission_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Latest location per member
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Location" }
+# Realtime: connect to ws://<host>/ws/missions/{mission_id}?token=<jwt> to
+# receive mission.* events (manual §14.2) fanned out over Redis pub/sub.
 components:
   securitySchemes:
     bearerAuth:
@@ -333,6 +467,24 @@ components:
         members:
           type: array
           items: { $ref: "#/components/schemas/MissionMember" }
+    ChatMessage:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        mission_id: { type: string, format: uuid }
+        user_id: { type: string, format: uuid }
+        message: { type: string }
+        created_at: { type: string, format: date-time }
+    Location:
+      type: object
+      properties:
+        user_id: { type: string, format: uuid }
+        latitude: { type: number }
+        longitude: { type: number }
+        accuracy_m: { type: number, nullable: true }
+        speed: { type: number, nullable: true }
+        heading: { type: number, nullable: true }
+        timestamp: { type: string, format: date-time }
     Incident:
       type: object
       properties:

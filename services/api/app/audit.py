@@ -8,6 +8,7 @@ surfaced to logs for follow-up.
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 import uuid
 from typing import Any
@@ -18,6 +19,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .models import AuditLog
 
 logger = logging.getLogger("rescue_net.audit")
+
+
+def _client_ip(request: Request | None) -> str | None:
+    """Return the client host only if it is a valid IP for the INET column.
+
+    Behind proxies or in tests the host can be a name (e.g. Starlette's
+    "testclient"); storing that would fail the INET insert and poison the
+    transaction, so it is dropped to NULL.
+    """
+    if request is None or request.client is None:
+        return None
+    host = request.client.host
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        return None
+    return host
 
 
 async def record_audit(
@@ -41,7 +59,7 @@ async def record_audit(
         action=action,
         entity_type=entity_type,
         entity_id=str(entity_id) if entity_id is not None else None,
-        ip_address=request.client.host if request and request.client else None,
+        ip_address=_client_ip(request),
         user_agent=request.headers.get("user-agent") if request else None,
         audit_metadata=metadata,
     )
