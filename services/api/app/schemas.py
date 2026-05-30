@@ -8,7 +8,14 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
-from .enums import IncidentStatus, UserRole, VerificationStatus
+from .enums import (
+    AlertResponse,
+    AlertType,
+    IncidentStatus,
+    MissionStatus,
+    UserRole,
+    VerificationStatus,
+)
 
 Priority = Literal["low", "medium", "high"]
 
@@ -113,3 +120,72 @@ class ResponderCandidate(ResponderOut):
     """A responder matched by the alert candidate search, with distance."""
 
     distance_m: float
+
+
+# --- Alerts ---------------------------------------------------------------
+
+
+class AlertSendRequest(BaseModel):
+    alert_type: AlertType = AlertType.AVAILABILITY_REQUEST
+    # Required for high-priority incidents (manual section 22.1).
+    reason: str | None = Field(default=None, max_length=500)
+    verified_only: bool = True
+    skills: list[str] = Field(default_factory=list)
+    limit: int = Field(default=100, ge=1, le=500)
+
+
+class AlertSendResult(BaseModel):
+    incident_id: uuid.UUID
+    alert_type: AlertType
+    expiry_at: datetime
+    recipients: int
+    alert_ids: list[uuid.UUID]
+
+
+class AlertOut(BaseModel):
+    id: uuid.UUID
+    incident_id: uuid.UUID
+    user_id: uuid.UUID
+    alert_type: AlertType
+    status: str
+    response: AlertResponse | None
+    sent_at: datetime
+    responded_at: datetime | None
+    expiry_at: datetime | None
+
+
+class AlertRespondRequest(BaseModel):
+    # Timeout is system-assigned, not a user response.
+    response: Literal["yes", "no", "need_details"]
+
+
+# --- Missions -------------------------------------------------------------
+
+
+class MissionCreateRequest(BaseModel):
+    lead_user_id: uuid.UUID | None = None
+    # Add responders who accepted an alert for this incident as mission members.
+    auto_add_accepted: bool = True
+
+
+class MissionMemberOut(BaseModel):
+    user_id: uuid.UUID
+    role_in_mission: str
+    joined_at: datetime
+    left_at: datetime | None
+    live_location_enabled: bool
+
+
+class MissionOut(BaseModel):
+    id: uuid.UUID
+    incident_id: uuid.UUID
+    lead_user_id: uuid.UUID | None
+    status: MissionStatus
+    started_at: datetime | None
+    closed_at: datetime | None
+    created_at: datetime
+    members: list[MissionMemberOut]
+
+
+class MissionUpdate(BaseModel):
+    status: MissionStatus
