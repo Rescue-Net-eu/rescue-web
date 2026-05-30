@@ -27,6 +27,12 @@ TEST_DATABASE_URL = (
     or "postgresql+asyncpg://rescuenet:rescuenet@127.0.0.1:5432/rescuenet_test"
 )
 
+# Enable the broker for realtime tests. Default to a local Redis; tests that
+# need it skip cleanly via the broker being unreachable only if explicitly
+# checked (the REST flows tolerate a down broker).
+TEST_REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+os.environ.setdefault("REDIS_URL", TEST_REDIS_URL)
+
 
 def _sync_url(url: str) -> str:
     return url.replace("+asyncpg", "+psycopg2")
@@ -72,4 +78,5 @@ async def client(_clean: None) -> AsyncClient:
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
 
+    await app.state.broker.close()
     await engine.dispose()

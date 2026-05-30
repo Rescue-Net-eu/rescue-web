@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 from sqlalchemy import text
 
+from ..broker import Broker
 from ..config import get_settings
 from ..db import get_engine
 
@@ -34,7 +35,14 @@ async def readyz() -> dict[str, object]:
     else:
         checks["database"] = "not_configured"
 
-    checks["redis"] = "ok" if settings.redis_url else "not_configured"
+    if settings.redis_url:
+        broker = Broker(settings.redis_url)
+        try:
+            checks["redis"] = "ok" if await broker.ping() else "unavailable"
+        finally:
+            await broker.close()
+    else:
+        checks["redis"] = "not_configured"
 
     ready = "unavailable" not in checks.values()
     return {"status": "ready" if ready else "degraded", "checks": checks}
