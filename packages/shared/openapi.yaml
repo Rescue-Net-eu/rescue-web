@@ -123,6 +123,144 @@ paths:
               schema:
                 type: array
                 items: { $ref: "#/components/schemas/ResponderCandidate" }
+  /incidents/{incident_id}/alerts:
+    post:
+      summary: Alert nearby responders (dispatcher; manual §9)
+      tags: [alerts]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: incident_id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                alert_type: { type: string }
+                reason: { type: string, nullable: true }
+                verified_only: { type: boolean, default: true }
+                skills: { type: array, items: { type: string } }
+      responses:
+        "201":
+          description: Alert campaign summary
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  incident_id: { type: string, format: uuid }
+                  expiry_at: { type: string, format: date-time }
+                  recipients: { type: integer }
+                  alert_ids: { type: array, items: { type: string, format: uuid } }
+        "422": { description: Missing search area or required reason }
+        "429": { description: Rate limit exceeded }
+  /incidents/{incident_id}/create-mission:
+    post:
+      summary: Create a mission from an incident (dispatcher; manual §5.3)
+      tags: [missions]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: incident_id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                lead_user_id: { type: string, format: uuid, nullable: true }
+                auto_add_accepted: { type: boolean, default: true }
+      responses:
+        "201":
+          description: Created mission
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Mission" }
+  /alerts:
+    get:
+      summary: List the current user's alerts
+      tags: [alerts]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Alert inbox
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Alert" }
+  /alerts/{alert_id}/respond:
+    post:
+      summary: Respond to an alert (recipient; manual §9.3)
+      tags: [alerts]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: alert_id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [response]
+              properties:
+                response: { type: string, enum: [yes, no, need_details] }
+      responses:
+        "200":
+          description: Updated alert
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Alert" }
+        "409": { description: Alert has expired }
+  /missions:
+    get:
+      summary: List missions (membership-scoped for non-staff)
+      tags: [missions]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Mission collection
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Mission" }
+  /missions/{mission_id}:
+    get:
+      summary: Get a mission
+      tags: [missions]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: mission_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Mission
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Mission" }
+        "403": { description: Not a mission member }
+    patch:
+      summary: Update mission status (staff or Team Lead; manual §8)
+      tags: [missions]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: mission_id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  enum: [pending, mobilizing, active, waiting, returning, closed, cancelled]
+      responses:
+        "200":
+          description: Updated mission
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Mission" }
 components:
   securitySchemes:
     bearerAuth:
@@ -160,6 +298,41 @@ components:
         latitude: { type: number, nullable: true }
         longitude: { type: number, nullable: true }
         distance_m: { type: number }
+    Alert:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        incident_id: { type: string, format: uuid }
+        user_id: { type: string, format: uuid }
+        alert_type: { type: string }
+        status: { type: string, enum: [sent, responded, timeout] }
+        response: { type: string, enum: [yes, no, need_details, timeout], nullable: true }
+        sent_at: { type: string, format: date-time }
+        responded_at: { type: string, format: date-time, nullable: true }
+        expiry_at: { type: string, format: date-time, nullable: true }
+    MissionMember:
+      type: object
+      properties:
+        user_id: { type: string, format: uuid }
+        role_in_mission: { type: string }
+        joined_at: { type: string, format: date-time }
+        left_at: { type: string, format: date-time, nullable: true }
+        live_location_enabled: { type: boolean }
+    Mission:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        incident_id: { type: string, format: uuid }
+        lead_user_id: { type: string, format: uuid, nullable: true }
+        status:
+          type: string
+          enum: [pending, mobilizing, active, waiting, returning, closed, cancelled]
+        started_at: { type: string, format: date-time, nullable: true }
+        closed_at: { type: string, format: date-time, nullable: true }
+        created_at: { type: string, format: date-time }
+        members:
+          type: array
+          items: { $ref: "#/components/schemas/MissionMember" }
     Incident:
       type: object
       properties:

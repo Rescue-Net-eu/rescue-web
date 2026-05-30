@@ -13,20 +13,31 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.sql.functions import func
 
+from ..alerting import (
+    ALERT_SEND_ACTION,
+    RATE_LIMIT_CAMPAIGNS,
+    expiry_for_priority,
+    recent_campaign_count,
+)
 from ..audit import record_audit
 from ..db import get_session
 from ..deps import get_current_user, require_dispatcher
-from ..enums import IncidentStatus, VerificationStatus
+from ..enums import AlertResponse, IncidentStatus, MissionStatus, VerificationStatus
 from ..geo import latitude_of, longitude_of, make_point
-from ..models import Incident, Responder, User
+from ..models import Alert, Incident, Mission, MissionMember, User
+from ..queries import find_candidates
 from ..schemas import (
+    AlertSendRequest,
+    AlertSendResult,
     IncidentCreate,
     IncidentOut,
     IncidentUpdate,
+    MissionCreateRequest,
+    MissionOut,
     ResponderCandidate,
 )
+from .missions import mission_out
 
 router = APIRouter(prefix="/incidents", tags=["incidents"])
 
@@ -222,26 +233,15 @@ async def responder_candidates(
             detail="Incident has no centre point and radius to search within",
         )
 
-    center = make_point(lng, lat)
-    distance = func.ST_Distance(Responder.home_location, center)
-    stmt = (
-        select(
-            Responder,
-            distance.label("distance_m"),
-            latitude_of(Responder.home_location).label("lat"),
-            longitude_of(Responder.home_location).label("lng"),
-        )
-        .where(Responder.home_location.isnot(None))
-        .where(func.ST_DWithin(Responder.home_location, center, incident.radius_m))
-        .order_by(distance.asc())
-        .limit(limit)
+    rows = await find_candidates(
+        session,
+        longitude=lng,
+        latitude=lat,
+        radius_m=incident.radius_m,
+        verified_only=verified_only,
+        skills=skills,
+        limit=limit,
     )
-    if verified_only:
-        stmt = stmt.where(Responder.verification_status == VerificationStatus.VERIFIED.value)
-    if skills:
-        stmt = stmt.where(Responder.skills.op("&&")(skills))
-
-    rows = (await session.execute(stmt)).all()
     return [
         ResponderCandidate(
             id=r.id,
@@ -261,16 +261,180 @@ async def responder_candidates(
     ]
 
 
-# --- Stubs deferred to the next increment (alerting + mission creation) ----
+@router.post(
+    "/{incident_id}/alerts",
+    response_model=AlertSendResult,
+    status_code=status.HTTP_201_CREATED,
+)
+async def trigger_alerts(
+    incident_id: uuid.UUID,
+    payload: AlertSendRequest,
+    request: Request,
+    user: User = Depends(require_dispatcher),
+    session: AsyncSession = Depends(get_session),
+) -> AlertSendResult:
+    """Alert nearby responders for an incident (manual sections 5.2, 9).
 
-_NOT_IMPLEMENTED = "Not implemented in this increment; see manual section 27."
+    Selects candidates by proximity/skills, creates one alert per recipient
+    with a priority-based expiry, and moves the incident to ``alerting``.
+    """
+    incident, lat, lng = await _load_incident(session, incident_id)
+    if incident.status in {IncidentStatus.CLOSED, IncidentStatus.CANCELLED}:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Incident is not active")
+    if lat is None or lng is None or incident.radius_m is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Incident has no centre point and radius to alert within",
+        )
+    # High-priority alerts must carry a reason (manual section 22.1).
+    if incident.priority == "high" and not (payload.reason and payload.reason.strip()):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="A reason is required for high-priority alerts",
+        )
+
+    # Anti-abuse rate limit per dispatcher (manual section 9.5).
+    if await recent_campaign_count(session, user.id) >= RATE_LIMIT_CAMPAIGNS:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Alert rate limit exceeded; please wait before sending more",
+        )
+
+    rows = await find_candidates(
+        session,
+        longitude=lng,
+        latitude=lat,
+        radius_m=incident.radius_m,
+        verified_only=payload.verified_only,
+        skills=payload.skills or None,
+        limit=payload.limit,
+    )
+
+    # Skip responders who already have an outstanding alert for this incident.
+    existing = (
+        await session.execute(
+            select(Alert.user_id).where(
+                Alert.incident_id == incident_id, Alert.status == "sent"
+            )
+        )
+    ).scalars().all()
+    already = set(existing)
+
+    expiry = expiry_for_priority(incident.priority)
+    created: list[Alert] = []
+    for responder, *_ in rows:
+        if responder.user_id in already:
+            continue
+        alert = Alert(
+            incident_id=incident_id,
+            user_id=responder.user_id,
+            alert_type=payload.alert_type,
+            status="sent",
+            expiry_at=expiry,
+        )
+        session.add(alert)
+        created.append(alert)
+
+    if incident.status != IncidentStatus.ALERTING:
+        incident.status = IncidentStatus.ALERTING
+    await session.flush()
+
+    await record_audit(
+        session,
+        action=ALERT_SEND_ACTION,
+        actor_user_id=user.id,
+        entity_type="incident",
+        entity_id=incident_id,
+        request=request,
+        metadata={
+            "alert_type": payload.alert_type,
+            "recipients": len(created),
+            "reason": payload.reason,
+        },
+    )
+    await session.commit()
+
+    return AlertSendResult(
+        incident_id=incident_id,
+        alert_type=payload.alert_type,
+        expiry_at=expiry,
+        recipients=len(created),
+        alert_ids=[a.id for a in created],
+    )
 
 
-@router.post("/{incident_id}/alerts", status_code=status.HTTP_501_NOT_IMPLEMENTED)
-async def trigger_alerts(incident_id: uuid.UUID) -> dict[str, str]:
-    return {"detail": _NOT_IMPLEMENTED}
+@router.post(
+    "/{incident_id}/create-mission",
+    response_model=MissionOut,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_mission(
+    incident_id: uuid.UUID,
+    payload: MissionCreateRequest,
+    request: Request,
+    user: User = Depends(require_dispatcher),
+    session: AsyncSession = Depends(get_session),
+) -> MissionOut:
+    """Create a mission from an incident and assign an optional Team Lead.
 
+    Responders who accepted an alert for the incident are added as mission
+    members (manual section 5.3).
+    """
+    incident, _lat, _lng = await _load_incident(session, incident_id)
+    if incident.status in {IncidentStatus.CLOSED, IncidentStatus.CANCELLED}:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Incident is not active")
 
-@router.post("/{incident_id}/create-mission", status_code=status.HTTP_501_NOT_IMPLEMENTED)
-async def create_mission(incident_id: uuid.UUID) -> dict[str, str]:
-    return {"detail": _NOT_IMPLEMENTED}
+    if payload.lead_user_id is not None:
+        lead = await session.get(User, payload.lead_user_id)
+        if lead is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead user not found")
+
+    mission = Mission(
+        incident_id=incident_id,
+        lead_user_id=payload.lead_user_id,
+        status=MissionStatus.PENDING,
+    )
+    session.add(mission)
+    await session.flush()
+
+    member_user_ids: set[uuid.UUID] = set()
+    if payload.lead_user_id is not None:
+        session.add(
+            MissionMember(
+                mission_id=mission.id,
+                user_id=payload.lead_user_id,
+                role_in_mission="team_lead",
+            )
+        )
+        member_user_ids.add(payload.lead_user_id)
+
+    if payload.auto_add_accepted:
+        accepted = (
+            await session.execute(
+                select(Alert.user_id).where(
+                    Alert.incident_id == incident_id, Alert.response == AlertResponse.YES
+                )
+            )
+        ).scalars().all()
+        for accepted_user in accepted:
+            if accepted_user in member_user_ids:
+                continue
+            session.add(
+                MissionMember(
+                    mission_id=mission.id, user_id=accepted_user, role_in_mission="responder"
+                )
+            )
+            member_user_ids.add(accepted_user)
+
+    incident.status = IncidentStatus.MISSION_CREATED
+    await record_audit(
+        session,
+        action="mission.create",
+        actor_user_id=user.id,
+        entity_type="mission",
+        entity_id=mission.id,
+        request=request,
+        metadata={"incident_id": str(incident_id), "members": len(member_user_ids)},
+    )
+    await session.commit()
+    return await mission_out(session, mission.id)

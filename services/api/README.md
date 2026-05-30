@@ -15,10 +15,17 @@ Implemented (manual §27 priorities 1–6):
 - **Geospatial responder search** — `GET /incidents/{id}/candidates` finds nearby
   verified responders within the incident radius (PostGIS `ST_DWithin`), ordered by
   distance, filterable by skills.
+- **Alerting** (§9) — `POST /incidents/{id}/alerts` selects candidates and sends alerts
+  with priority-based expiry (§9.4), a reason requirement for high-priority incidents
+  (§22.1) and a per-dispatcher rate limit (§9.5); responders see `GET /alerts` and answer
+  via `POST /alerts/{id}/respond` (expired alerts read as `timeout` and cannot be answered).
+- **Mission creation** (§5.3) — `POST /incidents/{id}/create-mission` assigns a Team Lead
+  and enrolls responders who accepted; `GET /missions`, `GET /missions/{id}` (membership-
+  scoped) and `PATCH /missions/{id}` for status transitions (§8).
 - **Audit logging** — every high-risk action is recorded; `GET /admin/audit-logs`.
 
-Alerting, mission creation, the mission room (WebSocket), chat and live location are
-the next increments.
+The mission room (WebSocket), chat, tasks, live location and mission closure are the
+next increments.
 
 ## Local development
 
