@@ -17,6 +17,7 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Index,
+    Integer,
     String,
     Text,
     func,
@@ -192,6 +193,8 @@ class ChatMessage(Base):
 
 class Task(Base):
     __tablename__ = "tasks"
+    # Task lists are read per mission and filtered by status (manual section 5.4).
+    __table_args__ = (Index("ix_tasks_mission_status", "mission_id", "status"),)
 
     id: Mapped[uuid.UUID] = _uuid_pk()
     mission_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("missions.id", ondelete="CASCADE"))
@@ -231,3 +234,41 @@ class ConsentRecord(Base):
     accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     ip_address: Mapped[str | None] = mapped_column(INET)
+
+
+class MissionArchive(Base):
+    """Anonymized long-term mission record (manual sections 16.2, 23).
+
+    This is the historical-reporting tier. It holds **no personal data** — no
+    user ids, no raw coordinates, no free text — only aggregate counts and
+    operational metadata. Because it is non-personal, it falls outside GDPR's
+    storage-limitation rules (Recital 26) and can be retained for ~10 years
+    while the underlying personal data is purged on the short schedule.
+
+    There is intentionally no foreign key to ``missions``: the archive must
+    outlive the mission's personal data. ``mission_id`` is kept only as an
+    opaque correlation key (a random UUID, not identifying on its own).
+    """
+
+    __tablename__ = "mission_archive"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    mission_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), unique=True, index=True)
+    incident_type: Mapped[str | None] = mapped_column(String(64))
+    priority: Mapped[str | None] = mapped_column(String(16))
+    final_status: Mapped[str | None] = mapped_column(String(32))
+    region: Mapped[str | None] = mapped_column(String(128))
+    year: Mapped[int | None] = mapped_column(Integer, index=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    duration_seconds: Mapped[int | None] = mapped_column(BigInteger)
+    responder_count: Mapped[int] = mapped_column(Integer, default=0)
+    accepted_count: Mapped[int] = mapped_column(Integer, default=0)
+    task_total: Mapped[int] = mapped_column(Integer, default=0)
+    task_completed: Mapped[int] = mapped_column(Integer, default=0)
+    chat_message_count: Mapped[int] = mapped_column(Integer, default=0)
+    location_sample_count: Mapped[int] = mapped_column(Integer, default=0)
+    skills_used: Mapped[list[str]] = mapped_column(ARRAY(String), default=list)
+    archived_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )

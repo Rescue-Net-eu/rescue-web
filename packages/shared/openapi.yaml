@@ -393,6 +393,106 @@ paths:
               schema:
                 type: array
                 items: { $ref: "#/components/schemas/Location" }
+  /missions/{mission_id}/tasks:
+    get:
+      summary: List mission tasks (members; §5.4)
+      tags: [missions]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: mission_id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: status, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: Tasks
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Task" }
+    post:
+      summary: Create/assign a task (staff or Team Lead; §6.4)
+      tags: [missions]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: mission_id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title]
+              properties:
+                title: { type: string }
+                description: { type: string, nullable: true }
+                priority: { type: string, enum: [low, medium, high], default: medium }
+                assigned_to: { type: string, format: uuid, nullable: true }
+                due_at: { type: string, format: date-time, nullable: true }
+      responses:
+        "201":
+          description: Created task
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Task" }
+        "403": { description: Only staff or the Team Lead may create tasks }
+        "422": { description: Assignee is not an active mission member }
+  /missions/{mission_id}/tasks/{task_id}:
+    patch:
+      summary: Update a task (staff/lead any field; assignee may set own status; §5.4)
+      tags: [missions]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: mission_id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: task_id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title: { type: string }
+                description: { type: string, nullable: true }
+                status: { type: string, enum: [open, in_progress, blocked, done, cancelled] }
+                priority: { type: string, enum: [low, medium, high] }
+                assigned_to: { type: string, format: uuid, nullable: true }
+                due_at: { type: string, format: date-time, nullable: true }
+      responses:
+        "200":
+          description: Updated task
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Task" }
+        "403": { description: Responders may only set the status of their own task }
+  /admin/retention/run:
+    post:
+      summary: Run GDPR retention sweeps on demand (platform admin; §16.2)
+      tags: [admin]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Counts per sweep
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: { type: integer }
+        "403": { description: Platform admin only }
+  /admin/users/{user_id}/erase:
+    post:
+      summary: Erase a user's personal data (platform admin; §16.4)
+      tags: [admin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: user_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Summary of removed personal data
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: { type: integer }
+        "404": { description: User not found }
 # Realtime: connect to ws://<host>/ws/missions/{mission_id}?token=<jwt> to
 # receive mission.* events (manual §14.2) fanned out over Redis pub/sub.
 components:
@@ -485,6 +585,19 @@ components:
         speed: { type: number, nullable: true }
         heading: { type: number, nullable: true }
         timestamp: { type: string, format: date-time }
+    Task:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        mission_id: { type: string, format: uuid }
+        assigned_to: { type: string, format: uuid, nullable: true }
+        created_by: { type: string, format: uuid }
+        title: { type: string }
+        description: { type: string, nullable: true }
+        status: { type: string, enum: [open, in_progress, blocked, done, cancelled] }
+        priority: { type: string, enum: [low, medium, high] }
+        due_at: { type: string, format: date-time, nullable: true }
+        completed_at: { type: string, format: date-time, nullable: true }
     Incident:
       type: object
       properties:

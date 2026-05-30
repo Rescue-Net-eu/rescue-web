@@ -19,9 +19,9 @@ from .. import events
 from ..audit import record_audit
 from ..db import get_session
 from ..deps import get_current_user
-from ..enums import AlertResponse, MissionStatus, UserRole
+from ..enums import AlertResponse, MissionStatus, TaskStatus, UserRole
 from ..geo import latitude_of, longitude_of, make_point
-from ..models import Alert, ChatMessage, Location, Mission, MissionMember, User
+from ..models import Alert, ChatMessage, Location, Mission, MissionMember, Task, User
 from ..schemas import (
     ChatMessageCreate,
     ChatMessageOut,
@@ -32,6 +32,9 @@ from ..schemas import (
     MissionMemberOut,
     MissionOut,
     MissionUpdate,
+    TaskCreate,
+    TaskOut,
+    TaskUpdate,
 )
 
 router = APIRouter(prefix="/missions", tags=["missions"])
@@ -487,13 +490,156 @@ async def live_locations(
     ]
 
 
-@router.get("/{mission_id}/tasks")
-async def list_tasks(mission_id: uuid.UUID) -> list[dict]:
-    # Task management lands in a later increment (manual section 27).
-    return []
+# --- Tasks (manual sections 5.4, 13.10) ----------------------------------
+
+
+def _ensure_can_assign(mission: Mission, user: User) -> None:
+    """Creating/assigning tasks is for write-staff or the Team Lead (§6.4)."""
+    if UserRole(user.role) in _STAFF_WRITE or mission.lead_user_id == user.id:
+        return
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Only staff or the Team Lead can manage tasks",
+    )
+
+
+@router.get("/{mission_id}/tasks", response_model=list[TaskOut])
+async def list_tasks(
+    mission_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+    status_filter: TaskStatus | None = Query(default=None, alias="status"),
+) -> list[Task]:
+    mission = await _get_mission(session, mission_id)
+    await _ensure_can_read(session, mission, user)
+    stmt = select(Task).where(Task.mission_id == mission_id).order_by(Task.priority.desc())
+    if status_filter is not None:
+        stmt = stmt.where(Task.status == status_filter.value)
+    return list((await session.execute(stmt)).scalars().all())
+
+
+@router.post(
+    "/{mission_id}/tasks",
+    response_model=TaskOut,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_task(
+    mission_id: uuid.UUID,
+    payload: TaskCreate,
+    request: Request,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> Task:
+    mission = await _get_mission(session, mission_id)
+    _ensure_writable(mission)
+    _ensure_can_assign(mission, user)
+
+    if payload.assigned_to is not None:
+        await _ensure_valid_assignee(session, mission, payload.assigned_to)
+
+    task = Task(
+        mission_id=mission_id,
+        created_by=user.id,
+        assigned_to=payload.assigned_to,
+        title=payload.title,
+        description=payload.description,
+        status=TaskStatus.OPEN,
+        priority=payload.priority,
+        due_at=payload.due_at,
+    )
+    session.add(task)
+    await session.flush()
+
+    await record_audit(
+        session,
+        action="task.create",
+        actor_user_id=user.id,
+        entity_type="task",
+        entity_id=task.id,
+        request=request,
+        metadata={"assigned_to": str(payload.assigned_to) if payload.assigned_to else None},
+    )
+    await session.commit()
+    await session.refresh(task)
+    out = TaskOut.model_validate(task)
+    await _publish(request, mission_id, events.TASK_CREATED, out.model_dump(mode="json"))
+    return task
+
+
+@router.patch("/{mission_id}/tasks/{task_id}", response_model=TaskOut)
+async def update_task(
+    mission_id: uuid.UUID,
+    task_id: uuid.UUID,
+    payload: TaskUpdate,
+    request: Request,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> Task:
+    mission = await _get_mission(session, mission_id)
+    _ensure_writable(mission)
+
+    task = await session.get(Task, task_id)
+    if task is None or task.mission_id != mission_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+
+    fields = payload.model_dump(exclude_unset=True)
+    is_manager = UserRole(user.role) in _STAFF_WRITE or mission.lead_user_id == user.id
+
+    if not is_manager:
+        # A responder may only progress a task assigned to them, and only its
+        # status (manual sections 5.4, 6.5).
+        if task.assigned_to != user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You can only update a task assigned to you",
+            )
+        if set(fields) - {"status"}:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You may only update the task status",
+            )
+
+    if "assigned_to" in fields and fields["assigned_to"] is not None:
+        await _ensure_valid_assignee(session, mission, fields["assigned_to"])
+
+    for attr in ("title", "description", "priority", "assigned_to", "due_at"):
+        if attr in fields:
+            setattr(task, attr, fields[attr])
+    if "status" in fields and fields["status"] is not None:
+        new_status = TaskStatus(fields["status"])
+        task.status = new_status
+        task.completed_at = datetime.now(UTC) if new_status == TaskStatus.DONE else None
+
+    await record_audit(
+        session,
+        action="task.update",
+        actor_user_id=user.id,
+        entity_type="task",
+        entity_id=task.id,
+        request=request,
+        metadata={"fields": sorted(fields.keys())},
+    )
+    await session.commit()
+    await session.refresh(task)
+    out = TaskOut.model_validate(task)
+    await _publish(request, mission_id, events.TASK_UPDATED, out.model_dump(mode="json"))
+    return task
 
 
 # --- Helpers --------------------------------------------------------------
+
+
+async def _ensure_valid_assignee(
+    session: AsyncSession, mission: Mission, assignee_id: uuid.UUID
+) -> None:
+    """A task may be assigned to the Team Lead or an active mission member."""
+    if mission.lead_user_id == assignee_id:
+        return
+    if await _active_member(session, mission.id, assignee_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Assignee must be an active mission member",
+        )
 
 
 async def _ensure_can_write_room(session: AsyncSession, mission: Mission, user: User) -> None:
