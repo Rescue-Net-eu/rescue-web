@@ -13,6 +13,7 @@ from .enums import (
     AlertType,
     IncidentStatus,
     MissionStatus,
+    TaskStatus,
     UserRole,
     VerificationStatus,
 )
@@ -231,3 +232,38 @@ class LocationOut(BaseModel):
     speed: float | None
     heading: float | None
     timestamp: datetime
+
+
+# --- Tasks (manual sections 5.4, 13.10) ----------------------------------
+
+
+class TaskCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=255)
+    description: str | None = Field(default=None, max_length=4000)
+    priority: Priority = "medium"
+    assigned_to: uuid.UUID | None = None
+    due_at: datetime | None = None
+
+
+class TaskUpdate(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=255)
+    description: str | None = Field(default=None, max_length=4000)
+    status: TaskStatus | None = None
+    priority: Priority | None = None
+    assigned_to: uuid.UUID | None = None
+    due_at: datetime | None = None
+
+
+class TaskOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    mission_id: uuid.UUID
+    assigned_to: uuid.UUID | None
+    created_by: uuid.UUID
+    title: str
+    description: str | None
+    status: TaskStatus
+    priority: str
+    due_at: datetime | None
+    completed_at: datetime | None

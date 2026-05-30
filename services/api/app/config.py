@@ -45,6 +45,14 @@ class Settings(BaseSettings):
     s3_endpoint: str | None = None
     s3_bucket: str | None = None
 
+    # Data retention windows (manual section 16.2). Personal data is purged on
+    # these schedules; the anonymized mission_archive is kept long-term for
+    # historical reporting and is exempt as non-personal data.
+    location_retention_days: int = 30
+    participation_retention_days: int = 1095  # 3 years
+    audit_retention_days: int = 1095  # 3 years (extend for legal hold)
+    archive_retention_years: int = 10
+
     @property
     def cors_origins(self) -> list[str]:
         return [o.strip() for o in self.allowed_origins.split(",") if o.strip()]

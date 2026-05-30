@@ -80,3 +80,13 @@ async def client(_clean: None) -> AsyncClient:
 
     await app.state.broker.close()
     await engine.dispose()
+
+
+@pytest_asyncio.fixture()
+async def db_session(_clean: None):
+    """A direct async session for unit-testing service functions (retention)."""
+    engine = create_async_engine(TEST_DATABASE_URL)
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async with sessionmaker() as session:
+        yield session
+    await engine.dispose()
