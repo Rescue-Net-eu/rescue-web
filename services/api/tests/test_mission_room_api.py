@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from httpx import AsyncClient
 
-from ._util import auth_header, dev_login, make_responder, user_id
+from ._util import auth_header, dev_login, make_responder
 
 
 async def _mission_with_member(client: AsyncClient) -> dict:

@@ -261,7 +261,7 @@ async def leave_mission(
     session: AsyncSession = Depends(get_session),
 ) -> MissionOut:
     """Leave a mission; live location sharing stops immediately (manual §16.2)."""
-    mission = await _get_mission(session, mission_id)
+    await _get_mission(session, mission_id)
     member = await _active_member(session, mission_id, user.id)
     if member is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not an active member")
