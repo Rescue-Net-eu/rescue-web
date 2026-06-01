@@ -14,7 +14,17 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import __version__
-from .api import admin, alerts, auth, health, incidents, missions, responders, ws
+from .api import (
+    admin,
+    alerts,
+    auth,
+    health,
+    incidents,
+    missions,
+    reports,
+    responders,
+    ws,
+)
 from .broker import Broker
 from .config import get_settings
 
@@ -57,6 +67,7 @@ def create_app() -> FastAPI:
     app.include_router(responders.router)
     app.include_router(alerts.router)
     app.include_router(missions.router)
+    app.include_router(reports.router)
     app.include_router(admin.router)
     app.include_router(ws.router)
 

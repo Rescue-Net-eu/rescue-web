@@ -7,6 +7,8 @@ is set by an admin (section 6.2 "Approve responders").
 
 from __future__ import annotations
 
+import uuid
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,7 +19,7 @@ from ..deps import get_current_user, require_admin
 from ..enums import VerificationStatus
 from ..geo import latitude_of, longitude_of, make_point
 from ..models import Responder, User
-from ..schemas import ResponderCreate, ResponderOut
+from ..schemas import ResponderCreate, ResponderOut, ResponderVerify
 
 router = APIRouter(prefix="/responders", tags=["responders"])
 
@@ -107,3 +109,36 @@ async def create_responder(
     await session.commit()
     await session.refresh(responder)
     return _responder_out(responder, payload.latitude, payload.longitude)
+
+
+@router.patch("/{responder_id}/verification", response_model=ResponderOut)
+async def set_verification(
+    responder_id: uuid.UUID,
+    payload: ResponderVerify,
+    request: Request,
+    admin: User = Depends(require_admin),
+    session: AsyncSession = Depends(get_session),
+) -> ResponderOut:
+    """Approve/verify or suspend a responder (manual section 6.2)."""
+    row = (
+        await session.execute(
+            _SELECT_WITH_COORDS.where(Responder.id == responder_id)
+        )
+    ).first()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Responder not found")
+    responder, lat, lng = row
+
+    responder.verification_status = payload.verification_status
+    await record_audit(
+        session,
+        action="responder.verify",
+        actor_user_id=admin.id,
+        entity_type="responder",
+        entity_id=responder.id,
+        request=request,
+        metadata={"verification_status": payload.verification_status},
+    )
+    await session.commit()
+    await session.refresh(responder)
+    return _responder_out(responder, lat, lng)

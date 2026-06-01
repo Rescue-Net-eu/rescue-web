@@ -64,7 +64,16 @@ python -m app erase-user --id <uuid>
 …or on demand as a platform admin: `POST /admin/retention/run`,
 `POST /admin/users/{id}/erase`.
 
-Mobile is the next increment.
+- **Admin & org management** (§6.1, §6.2, §14.1) — `GET /admin/users`,
+  `PATCH /admin/users/{id}` (role / suspend-reactivate), `GET|POST /admin/organizations`,
+  and responder approval via `PATCH /responders/{id}/verification`.
+- **Reports** (§23) — `GET /reports/missions/{id}` (mission report; staff or Team Lead),
+  `GET /reports/volunteers/{id}` (activity; staff or the volunteer themselves — personal
+  data, 3-year window), and `GET /reports/historical` (anonymized yearly aggregates from
+  `mission_archive`, spanning the full ~10-year horizon).
+
+Still to do: FCM push delivery and S3 attachments (both need external services), plus the
+mobile and web clients.
 
 ## Local development
 

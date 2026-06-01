@@ -267,3 +267,75 @@ class TaskOut(BaseModel):
     priority: str
     due_at: datetime | None
     completed_at: datetime | None
+
+
+# --- Admin: users & organizations (manual sections 6.1, 6.2, 14.1) -------
+
+
+class UserAdminUpdate(BaseModel):
+    role: UserRole | None = None
+    status: Literal["active", "suspended"] | None = None
+
+
+class OrganizationCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    country: str | None = Field(default=None, min_length=2, max_length=2)
+    region: str | None = Field(default=None, max_length=128)
+
+
+class OrganizationOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    name: str
+    country: str | None
+    region: str | None
+    status: str
+    created_at: datetime
+
+
+class ResponderVerify(BaseModel):
+    verification_status: VerificationStatus
+
+
+# --- Reports (manual section 23) ------------------------------------------
+
+
+class MissionReport(BaseModel):
+    """Operational mission report (manual section 23.1)."""
+
+    mission_id: uuid.UUID
+    incident_id: uuid.UUID
+    incident_title: str | None
+    incident_type: str | None
+    priority: str | None
+    status: MissionStatus
+    lead_user_id: uuid.UUID | None
+    started_at: datetime | None
+    closed_at: datetime | None
+    closure_summary: str | None
+    responders: list[uuid.UUID]
+    task_total: int
+    task_completed: int
+    chat_message_count: int
+
+
+class VolunteerActivityReport(BaseModel):
+    """Per-volunteer activity (manual section 23.2). Personal data — 3y window."""
+
+    user_id: uuid.UUID
+    missions_joined: int
+    alerts_received: int
+    alerts_accepted: int
+    alerts_declined: int
+    skills: list[str]
+    home_region: str | None
+
+
+class HistoricalSummaryRow(BaseModel):
+    """Anonymized aggregate from mission_archive (non-personal; long-term)."""
+
+    year: int | None
+    missions: int
+    total_responders: int
+    total_duration_seconds: int

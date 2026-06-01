@@ -17,10 +17,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .. import retention
 from ..audit import record_audit
 from ..db import get_session
-from ..deps import require_roles
+from ..deps import require_admin, require_roles
 from ..enums import UserRole
-from ..models import AuditLog, User
+from ..models import AuditLog, Organization, User
 from ..privacy import UserNotFound, erase_user
+from ..schemas import OrganizationCreate, OrganizationOut, UserAdminUpdate, UserOut
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -53,6 +54,90 @@ async def list_audit_logs(
     if entity_type:
         stmt = stmt.where(AuditLog.entity_type == entity_type)
     return list((await session.execute(stmt)).scalars().all())
+
+
+@router.get("/users", response_model=list[UserOut])
+async def list_users(
+    _admin: User = Depends(require_admin),
+    session: AsyncSession = Depends(get_session),
+    role: UserRole | None = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=500),
+) -> list[User]:
+    stmt = select(User).order_by(User.created_at.desc()).limit(limit)
+    if role is not None:
+        stmt = stmt.where(User.role == role.value)
+    return list((await session.execute(stmt)).scalars().all())
+
+
+@router.patch("/users/{user_id}", response_model=UserOut)
+async def update_user(
+    user_id: uuid.UUID,
+    payload: UserAdminUpdate,
+    request: Request,
+    admin: User = Depends(require_admin),
+    session: AsyncSession = Depends(get_session),
+) -> User:
+    """Change a user's role or suspend/reactivate them (manual sections 6.1, 6.2)."""
+    user = await session.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    fields = payload.model_dump(exclude_unset=True)
+    if not fields:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="No fields to update"
+        )
+    if "role" in fields and fields["role"] is not None:
+        user.role = UserRole(fields["role"])
+    if "status" in fields and fields["status"] is not None:
+        user.status = fields["status"]
+
+    await record_audit(
+        session,
+        action="user.update",
+        actor_user_id=admin.id,
+        entity_type="user",
+        entity_id=user.id,
+        request=request,
+        metadata={"fields": sorted(fields.keys())},
+    )
+    await session.commit()
+    await session.refresh(user)
+    return user
+
+
+@router.get("/organizations", response_model=list[OrganizationOut])
+async def list_organizations(
+    _admin: User = Depends(require_admin),
+    session: AsyncSession = Depends(get_session),
+) -> list[Organization]:
+    stmt = select(Organization).order_by(Organization.created_at.desc())
+    return list((await session.execute(stmt)).scalars().all())
+
+
+@router.post(
+    "/organizations", response_model=OrganizationOut, status_code=status.HTTP_201_CREATED
+)
+async def create_organization(
+    payload: OrganizationCreate,
+    request: Request,
+    admin: User = Depends(require_platform_admin),
+    session: AsyncSession = Depends(get_session),
+) -> Organization:
+    org = Organization(name=payload.name, country=payload.country, region=payload.region)
+    session.add(org)
+    await session.flush()
+    await record_audit(
+        session,
+        action="organization.create",
+        actor_user_id=admin.id,
+        entity_type="organization",
+        entity_id=org.id,
+        request=request,
+        metadata={"name": org.name},
+    )
+    await session.commit()
+    await session.refresh(org)
+    return org
 
 
 @router.post("/retention/run")
