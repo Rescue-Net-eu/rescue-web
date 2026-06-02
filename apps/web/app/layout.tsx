@@ -1,5 +1,8 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
+import "./globals.css";
+import { AuthProvider } from "./lib/auth";
+import { Shell } from "./components/shell";
 
 export const metadata: Metadata = {
   title: "rescue-net.eu — Dispatcher Console",
@@ -10,14 +13,10 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
-      <body
-        style={{
-          margin: 0,
-          fontFamily: "system-ui, Arial, sans-serif",
-          color: "#1a1a1a",
-        }}
-      >
-        {children}
+      <body>
+        <AuthProvider>
+          <Shell>{children}</Shell>
+        </AuthProvider>
       </body>
     </html>
   );
