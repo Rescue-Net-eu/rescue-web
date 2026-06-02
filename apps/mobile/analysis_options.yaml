@@ -1,5 +1,10 @@
 include: package:flutter_lints/flutter.yaml
 
+analyzer:
+  exclude:
+    # Developer-only manual smoke script (uses print, needs a live server).
+    - tool/**
+
 linter:
   rules:
     prefer_const_constructors: true
